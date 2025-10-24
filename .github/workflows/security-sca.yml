@@ -1,0 +1,50 @@
+name: SBOM + Dependency-Check CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Generate CycloneDX SBOM
+        run: mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom
+
+      - name: Run Dependency-Check scan via Docker
+        run: |
+          mkdir -p odc-reports
+          docker run --rm \
+            -v "${{ github.workspace }}":/src \
+            -v "${{ github.workspace }}/odc-reports":/report \
+            owasp/dependency-check:latest \
+            --scan /src \
+            --out /report \
+            --format "ALL" \
+            --project "lab-cyclonedx-dependencycheck"
+
+      - name: Upload scan reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: odc-reports/
+
+      - name: Fail on High or Critical vulnerabilities
+        run: |
+          if grep -q '"severity": "CRITICAL"' odc-reports/dependency-check-report.json || \
+             grep -q '"severity": "HIGH"' odc-reports/dependency-check-report.json; then
+            echo "High/Critical vulnerabilities found ❌"
+            exit 1
+          else
+            echo "No High/Critical issues ✅"
+          fi
